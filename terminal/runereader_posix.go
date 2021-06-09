@@ -12,12 +12,12 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"syscall"
-	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 type runeReaderState struct {
-	term   syscall.Termios
+	term   unix.Termios
 	reader *bufio.Reader
 	buf    *bytes.Buffer
 }
@@ -39,25 +39,19 @@ func (rr *RuneReader) Buffer() *bytes.Buffer {
 
 // For reading runes we just want to disable echo.
 func (rr *RuneReader) SetTermMode() error {
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(rr.stdio.In.Fd()), ioctlReadTermios, uintptr(unsafe.Pointer(&rr.state.term)), 0, 0, 0); err != 0 {
+	termios, err := unix.IoctlGetTermios(int(rr.stdio.In.Fd()), ioctlReadTermios)
+	if err != nil {
 		return err
 	}
 
-	newState := rr.state.term
-	newState.Lflag &^= syscall.ECHO | syscall.ECHONL | syscall.ICANON | syscall.ISIG
+	rr.state.term = *termios
+	termios.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG
 
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(rr.stdio.In.Fd()), ioctlWriteTermios, uintptr(unsafe.Pointer(&newState)), 0, 0, 0); err != 0 {
-		return err
-	}
-
-	return nil
+	return unix.IoctlSetTermios(int(rr.stdio.In.Fd()), ioctlWriteTermios, termios)
 }
 
 func (rr *RuneReader) RestoreTermMode() error {
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(rr.stdio.In.Fd()), ioctlWriteTermios, uintptr(unsafe.Pointer(&rr.state.term)), 0, 0, 0); err != 0 {
-		return err
-	}
-	return nil
+	return unix.IoctlSetTermios(int(rr.stdio.In.Fd()), ioctlWriteTermios, &rr.state.term)
 }
 
 func (rr *RuneReader) ReadRune() (rune, int, error) {
